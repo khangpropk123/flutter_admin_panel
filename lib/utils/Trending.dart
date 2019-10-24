@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:admin_panel/BLoC/ChartBloc.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,12 +8,15 @@ import 'package:gradient_widgets/gradient_widgets.dart';
 import './customIcons.dart';
 import 'data.dart';
 import 'dart:math';
-import '../components/DiskChart.dart';  
+import '../components/DiskChart.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:dio/dio.dart';
 import './../components/Panel.dart';
 import 'Loader.dart';
 import 'Load5.dart';
+import 'package:adhara_socket_io/adhara_socket_io.dart';
+
+const URI = "http://127.0.0.1:1024";
 
 class Trending extends StatefulWidget {
   @override
@@ -30,15 +35,84 @@ class _MyAppState extends State<Trending> {
   List<FlSpot> ramlistFl = new List<FlSpot>();
   List<FlSpot> netrxlistFl = new List<FlSpot>();
   List<FlSpot> nettxlistFl = new List<FlSpot>();
+  //Bloc Chart
+  ChartBloc chartBloc = new ChartBloc();
+  //Socket io
+
+  List<String> toPrint = ["trying to connect"];
+  SocketIOManager manager;
+  Map<String, SocketIO> sockets = {};
+  Map<String, bool> _isProbablyConnected = {};
+  //initSocket
+  initSocket(String identifier) async {
+    setState(() => _isProbablyConnected[identifier] = true);
+    SocketIO socket = await manager.createInstance(SocketOptions(
+        //Socket IO server URI
+        URI,
+        nameSpace: (identifier == "namespaced") ? "/adhara" : "/",
+        //Query params - can be used for authentication
+        query: {
+          "auth": "--SOME AUTH STRING---",
+          "info": "new connection from adhara-socketio",
+          "timestamp": DateTime.now().toString()
+        },
+        //Enable or disable platform channel logging
+        enableLogging: false,
+        transports: [
+          Transports.WEB_SOCKET /*, Transports.POLLING*/
+        ] //Enable required transport
+        ));
+    socket.onConnect((data) {
+      pprint("connected...");
+      pprint(data);
+      sendMessage(identifier);
+    });
+    socket.onConnectError(pprint);
+    socket.onConnectTimeout(pprint);
+    socket.onError(pprint);
+    socket.onDisconnect(pprint);
+    socket.on("monitor", (data) {
+      chartBloc.UpdateChartCPU(data['cpu']);
+      chartBloc.UpdateChartRAM(data['ram']);
+      chartBloc.UpdateChartDisk(data['disk_write'], data['disk_read']);
+    });
+    socket.connect();
+    sockets[identifier] = socket;
+  }
+
+  disconnect(String identifier) async {
+    await manager.clearInstance(sockets[identifier]);
+    setState(() => _isProbablyConnected[identifier] = false);
+  }
+
+  sendMessage(identifier) {
+    if (sockets[identifier] != null) {
+      pprint("sending message from '$identifier'...");
+      sockets[identifier].emit("message", ["Hello Server", 1908]);
+      pprint("Message emitted from '$identifier'...");
+    }
+  }
+
+  pprint(data) {
+    setState(() {
+      if (data is Map) {
+        data = json.encode(data);
+      }
+      print(data);
+      toPrint.add(data);
+    });
+  }
+
   @override
   void dispose() {
     super.dispose();
     chartcontroller.close();
+    chartBloc.dispose();
   }
 
   @override
   void initState() {
-    dio.options.baseUrl = "http://192.168.20.180:5000/api";
+    dio.options.baseUrl = "https://cybersvn.team/api";
     dio.options.connectTimeout = 5000; //5s
     dio.options.receiveTimeout = 6000;
     dio.options.validateStatus = (status) {
@@ -50,47 +124,13 @@ class _MyAppState extends State<Trending> {
     ramlistFl.add(FlSpot(0, 0));
     netrxlistFl.add(FlSpot(0, 0));
     nettxlistFl.add(FlSpot(0, 0));
-    try {
-      updateChart();
-    } catch (e) {
-      print (e);
-    }
-    
+
+    manager = SocketIOManager();
+    initSocket("default");
+
     // TODO: implement initState
     super.initState();
     SystemChrome.setEnabledSystemUIOverlays([SystemUiOverlay.bottom]);
-  }
-
-  void updateChart() {
-    int i = 0;
-    double x = 0;
-    double y = 0;
-    const sec = Duration(seconds: 5);
-    _timer = new Timer.periodic(
-        sec,
-        (Timer timer) => {
-              dio.get('/app-get-cpu').then((res) {
-                x = x + 1;
-                setState(() {
-                  if (x == 21) {
-                    cpulistFl.clear();
-                    cpulistFl.add(FlSpot(0, res.data['cpu']));
-                    ramlistFl.clear();
-                    ramlistFl.add(FlSpot(0, res.data['ram']));
-                    netrxlistFl.clear();
-                    netrxlistFl.add(FlSpot(0, res.data['netrx']));
-                    nettxlistFl.clear();
-                    nettxlistFl.add(FlSpot(0, res.data['nettx']));
-                    x = 0;
-                  } else {
-                    cpulistFl.add(FlSpot(x, res.data['cpu']));
-                    ramlistFl.add(FlSpot(x, res.data['ram']));
-                    netrxlistFl.add(FlSpot(x, res.data['netrx']));
-                    nettxlistFl.add(FlSpot(x, res.data['nettx']));
-                  }
-                });
-              })
-            });
   }
 
   @override
@@ -139,8 +179,7 @@ class _MyAppState extends State<Trending> {
                           fontFamily: "Calibre-Semibold",
                           letterSpacing: 1.0,
                         )),
-                    ColorLoader5(
-                    )
+                    ColorLoader5()
                   ],
                 ),
               ),
@@ -305,8 +344,10 @@ class _MyAppState extends State<Trending> {
                     flex: 2,
                     child: GestureDetector(
                       onTap: () {
-                        Navigator.push(context,
-                            MaterialPageRoute(builder: (context) => MemberPanel()));
+                        Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (context) => MemberPanel()));
                       },
                       child: Padding(
                         padding: EdgeInsets.only(right: 18.0),
@@ -372,7 +413,7 @@ class _MyAppState extends State<Trending> {
                           height: 4,
                         ),
                         Text(
-                          "Network Monitor",
+                          "Disk Monitor",
                           style: TextStyle(
                               color: Colors.white,
                               fontSize: 32,
@@ -387,118 +428,126 @@ class _MyAppState extends State<Trending> {
                           child: Padding(
                             padding:
                                 const EdgeInsets.only(right: 16.0, left: 6.0),
-                            child: FlChart(
-                              chart: LineChart(
-                                LineChartData(
-                                  lineTouchData: LineTouchData(
-                                      touchResponseSink: chartcontroller.sink,
-                                      touchTooltipData: TouchTooltipData(
-                                        tooltipBgColor:
-                                            Colors.blueGrey.withOpacity(0.8),
-                                      )),
-                                  gridData: FlGridData(
-                                    show: false,
-                                  ),
-                                  titlesData: FlTitlesData(
-                                    bottomTitles: SideTitles(
-                                      showTitles: true,
-                                      reservedSize: 22,
-                                      textStyle: TextStyle(
-                                        color: const Color(0xff72719b),
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 16,
-                                      ),
-                                      margin: 10,
-                                      getTitles: (value) {
-                                        switch (value.toInt()) {
-                                          case 19:
-                                            return 'Time';
-                                        }
-                                        return '';
-                                      },
-                                    ),
-                                    leftTitles: SideTitles(
-                                      showTitles: true,
-                                      textStyle: TextStyle(
-                                        color: Color(0xff75729e),
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 14,
-                                      ),
-                                      getTitles: (value) {
-                                        switch (value.toInt()) {
-                                          case 20:
-                                            return '20%';
-                                          case 40:
-                                            return '40%';
-                                          case 60:
-                                            return '60%';
-                                          case 80:
-                                            return '80%';
-                                          case 100:
-                                            return '100%';
-                                        }
-                                        return '';
-                                      },
-                                      margin: 8,
-                                      reservedSize: 30,
-                                    ),
-                                  ),
-                                  borderData: FlBorderData(
-                                      show: true,
-                                      border: Border(
-                                        bottom: BorderSide(
-                                          color: Color(0xff4e4965),
-                                          width: 4,
+                            child: StreamBuilder<List<List<FlSpot>>>(
+                                initialData: [],
+                                stream: chartBloc.blocChartDiskObject,
+                                builder: (context, snapshot) {
+                                  return FlChart(
+                                    chart: LineChart(
+                                      LineChartData(
+                                        lineTouchData: LineTouchData(
+                                            touchResponseSink:
+                                                chartcontroller.sink,
+                                            touchTooltipData: TouchTooltipData(
+                                              tooltipBgColor: Colors.blueGrey
+                                                  .withOpacity(0.8),
+                                            )),
+                                        gridData: FlGridData(
+                                          show: false,
                                         ),
-                                        left: BorderSide(
-                                          color: Colors.transparent,
+                                        titlesData: FlTitlesData(
+                                          bottomTitles: SideTitles(
+                                            showTitles: true,
+                                            reservedSize: 22,
+                                            textStyle: TextStyle(
+                                              color: const Color(0xff72719b),
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 16,
+                                            ),
+                                            margin: 10,
+                                            getTitles: (value) {
+                                              switch (value.toInt()) {
+                                                case 95:
+                                                  return 'Time';
+                                              }
+                                              return '';
+                                            },
+                                          ),
+                                          leftTitles: SideTitles(
+                                            showTitles: true,
+                                            textStyle: TextStyle(
+                                              color: Color(0xff75729e),
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 14,
+                                            ),
+                                            getTitles: (value) {
+                                              switch (value.toInt()) {
+                                                case 0:
+                                                  return '0';
+                                                case 200:
+                                                  return '200';
+                                                case 500:
+                                                  return '500';
+                                                case 800:
+                                                  return '800';
+                                                case 1000:
+                                                  return '1000';
+                                                case 1200:
+                                                  return 'MB';
+                                              }
+                                              return '';
+                                            },
+                                            margin: 8,
+                                            reservedSize: 30,
+                                          ),
                                         ),
-                                        right: BorderSide(
-                                          color: Colors.transparent,
-                                        ),
-                                        top: BorderSide(
-                                          color: Colors.transparent,
-                                        ),
-                                      )),
-                                  minX: 0,
-                                  maxX: 20,
-                                  maxY: 100,
-                                  minY: 0,
-                                  lineBarsData: [
-                                    LineChartBarData(
-                                      spots: netrxlistFl,
-                                      isCurved: true,
-                                      colors: [
-                                        Color(0xffaa4cfc),
-                                      ],
-                                      barWidth: 8,
-                                      isStrokeCapRound: true,
-                                      dotData: FlDotData(
-                                        show: false,
-                                      ),
-                                      belowBarData: BelowBarData(
-                                        show: false,
+                                        borderData: FlBorderData(
+                                            show: true,
+                                            border: Border(
+                                              bottom: BorderSide(
+                                                color: Color(0xff4e4965),
+                                                width: 4,
+                                              ),
+                                              left: BorderSide(
+                                                color: Colors.transparent,
+                                              ),
+                                              right: BorderSide(
+                                                color: Colors.transparent,
+                                              ),
+                                              top: BorderSide(
+                                                color: Colors.transparent,
+                                              ),
+                                            )),
+                                        minX: 0,
+                                        maxX: 100,
+                                        maxY: 1200,
+                                        minY: 0,
+                                        lineBarsData: [
+                                          LineChartBarData(
+                                            spots: snapshot.data[0],
+                                            isCurved: true,
+                                            colors: [
+                                              Color(0xffaa4cfc),
+                                            ],
+                                            barWidth: 8,
+                                            isStrokeCapRound: true,
+                                            dotData: FlDotData(
+                                              show: false,
+                                            ),
+                                            belowBarData: BelowBarData(
+                                              show: false,
+                                            ),
+                                          ),
+                                          LineChartBarData(
+                                            spots: snapshot.data[1],
+                                            isCurved: true,
+                                            colors: [
+                                              Color(0xff27b6fc),
+                                            ],
+                                            barWidth: 8,
+                                            isStrokeCapRound: true,
+                                            dotData: FlDotData(
+                                              show: false,
+                                            ),
+                                            belowBarData: BelowBarData(
+                                              show: false,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
-                                    LineChartBarData(
-                                      spots: nettxlistFl,
-                                      isCurved: true,
-                                      colors: [
-                                        Color(0xff27b6fc),
-                                      ],
-                                      barWidth: 8,
-                                      isStrokeCapRound: true,
-                                      dotData: FlDotData(
-                                        show: false,
-                                      ),
-                                      belowBarData: BelowBarData(
-                                        show: false,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
+                                  );
+                                }),
                           ),
                         ),
                         SizedBox(
@@ -527,108 +576,117 @@ class _MyAppState extends State<Trending> {
                           child: Padding(
                             padding: const EdgeInsets.only(
                                 right: 18.0, left: 12.0, top: 24, bottom: 12),
-                            child: FlChart(
-                              chart: LineChart(
-                                LineChartData(
-                                  gridData: FlGridData(
-                                    show: true,
-                                    drawHorizontalGrid: true,
-                                    getDrawingVerticalGridLine: (value) {
-                                      return const FlLine(
-                                        color: Color(0xff37434d),
-                                        strokeWidth: 1,
-                                      );
-                                    },
-                                    getDrawingHorizontalGridLine: (value) {
-                                      return const FlLine(
-                                        color: Color(0xff37434d),
-                                        strokeWidth: 1,
-                                      );
-                                    },
-                                  ),
-                                  titlesData: FlTitlesData(
-                                    show: true,
-                                    bottomTitles: SideTitles(
-                                      showTitles: true,
-                                      reservedSize: 22,
-                                      textStyle: TextStyle(
-                                          color: const Color(0xff68737d),
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 16),
-                                      getTitles: (value) {
-                                        switch (value.toInt()) {
-                                          case 0:
-                                            return '0s';
-                                          case 5:
-                                            return '5s';
-                                          case 10:
-                                            return '10s';
-                                          case 15:
-                                            return '15s';
-                                          case 20:
-                                            return '20s';
-                                        }
+                            child: StreamBuilder<Object>(
+                                initialData: cpulistFl,
+                                stream: chartBloc.blocChartCPU,
+                                builder: (context, snapshot) {
+                                  return FlChart(
+                                    chart: LineChart(
+                                      LineChartData(
+                                        gridData: FlGridData(
+                                          show: true,
+                                          drawHorizontalGrid: true,
+                                          getDrawingVerticalGridLine: (value) {
+                                            return const FlLine(
+                                              color: Color(0xff37434d),
+                                              strokeWidth: 1,
+                                            );
+                                          },
+                                          getDrawingHorizontalGridLine:
+                                              (value) {
+                                            return const FlLine(
+                                              color: Color(0xff37434d),
+                                              strokeWidth: 1,
+                                            );
+                                          },
+                                        ),
+                                        titlesData: FlTitlesData(
+                                          show: true,
+                                          bottomTitles: SideTitles(
+                                            showTitles: true,
+                                            reservedSize: 22,
+                                            textStyle: TextStyle(
+                                                color: const Color(0xff68737d),
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 16),
+                                            getTitles: (value) {
+                                              switch (value.toInt()) {
+                                                case 0:
+                                                  return '0s';
+                                                case 20:
+                                                  return '5s';
+                                                case 40:
+                                                  return '10s';
+                                                case 60:
+                                                  return '15s';
+                                                case 80:
+                                                  return '20s';
+                                                case 100:
+                                                  return '25s';
+                                              }
 
-                                        return '';
-                                      },
-                                      margin: 8,
-                                    ),
-                                    leftTitles: SideTitles(
-                                      showTitles: true,
-                                      textStyle: TextStyle(
-                                        color: const Color(0xff67727d),
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 15,
+                                              return '';
+                                            },
+                                            margin: 8,
+                                          ),
+                                          leftTitles: SideTitles(
+                                            showTitles: true,
+                                            textStyle: TextStyle(
+                                              color: const Color(0xff67727d),
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 15,
+                                            ),
+                                            getTitles: (value) {
+                                              switch (value.toInt()) {
+                                                case 20:
+                                                  return '20%';
+                                                case 40:
+                                                  return '40%';
+                                                case 60:
+                                                  return '60%';
+                                                case 80:
+                                                  return '80%';
+                                                case 100:
+                                                  return '100%';
+                                              }
+                                              return '';
+                                            },
+                                            reservedSize: 28,
+                                            margin: 12,
+                                          ),
+                                        ),
+                                        borderData: FlBorderData(
+                                            show: true,
+                                            border: Border.all(
+                                                color: Color(0xff37434d),
+                                                width: 1)),
+                                        minX: 0,
+                                        maxX: 100,
+                                        minY: 0,
+                                        maxY: 100,
+                                        lineBarsData: [
+                                          LineChartBarData(
+                                            spots: snapshot.data,
+                                            isCurved: true,
+                                            colors: cpuGradientColors,
+                                            barWidth: 5,
+                                            isStrokeCapRound: true,
+                                            dotData: FlDotData(
+                                              show: false,
+                                            ),
+                                            belowBarData: BelowBarData(
+                                              show: true,
+                                              colors: cpuGradientColors
+                                                  .map((color) =>
+                                                      color.withOpacity(0.3))
+                                                  .toList(),
+                                            ),
+                                          ),
+                                        ],
                                       ),
-                                      getTitles: (value) {
-                                        switch (value.toInt()) {
-                                          case 20:
-                                            return '20%';
-                                          case 40:
-                                            return '40%';
-                                          case 60:
-                                            return '60%';
-                                          case 80:
-                                            return '80%';
-                                          case 100:
-                                            return '100%';
-                                        }
-                                        return '';
-                                      },
-                                      reservedSize: 28,
-                                      margin: 12,
                                     ),
-                                  ),
-                                  borderData: FlBorderData(
-                                      show: true,
-                                      border: Border.all(
-                                          color: Color(0xff37434d), width: 1)),
-                                  minX: 0,
-                                  maxX: 20,
-                                  minY: 0,
-                                  maxY: 100,
-                                  lineBarsData: [
-                                    LineChartBarData(
-                                      spots: cpulistFl,
-                                      isCurved: true,
-                                      colors: cpuGradientColors,
-                                      barWidth: 5,
-                                      isStrokeCapRound: true,
-                                      dotData: FlDotData(
-                                        show: false,
-                                      ),
-                                      belowBarData: BelowBarData(
-                                        show: true,
-                                        colors: cpuGradientColors
-                                            .map((color) =>
-                                                color.withOpacity(0.3))
-                                            .toList(),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
+                                  );
+                                }),
                           ),
                         ),
                       ),
@@ -693,108 +751,117 @@ class _MyAppState extends State<Trending> {
                           child: Padding(
                             padding: const EdgeInsets.only(
                                 right: 18.0, left: 12.0, top: 24, bottom: 12),
-                            child: FlChart(
-                              chart: LineChart(
-                                LineChartData(
-                                  gridData: FlGridData(
-                                    show: true,
-                                    drawHorizontalGrid: true,
-                                    getDrawingVerticalGridLine: (value) {
-                                      return const FlLine(
-                                        color: Color(0xff37434d),
-                                        strokeWidth: 1,
-                                      );
-                                    },
-                                    getDrawingHorizontalGridLine: (value) {
-                                      return const FlLine(
-                                        color: Color(0xff37434d),
-                                        strokeWidth: 1,
-                                      );
-                                    },
-                                  ),
-                                  titlesData: FlTitlesData(
-                                    show: true,
-                                    bottomTitles: SideTitles(
-                                      showTitles: true,
-                                      reservedSize: 22,
-                                      textStyle: TextStyle(
-                                          color: const Color(0xff68737d),
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 16),
-                                      getTitles: (value) {
-                                        switch (value.toInt()) {
-                                          case 0:
-                                            return '0s';
-                                          case 5:
-                                            return '5s';
-                                          case 10:
-                                            return '10s';
-                                          case 15:
-                                            return '15s';
-                                          case 20:
-                                            return '20s';
-                                        }
+                            child: StreamBuilder<Object>(
+                                initialData: [chartBloc.initData],
+                                stream: chartBloc.blocChartRAM,
+                                builder: (context, snapshot) {
+                                  return FlChart(
+                                    chart: LineChart(
+                                      LineChartData(
+                                        gridData: FlGridData(
+                                          show: true,
+                                          drawHorizontalGrid: true,
+                                          getDrawingVerticalGridLine: (value) {
+                                            return const FlLine(
+                                              color: Color(0xff37434d),
+                                              strokeWidth: 1,
+                                            );
+                                          },
+                                          getDrawingHorizontalGridLine:
+                                              (value) {
+                                            return const FlLine(
+                                              color: Color(0xff37434d),
+                                              strokeWidth: 1,
+                                            );
+                                          },
+                                        ),
+                                        titlesData: FlTitlesData(
+                                          show: true,
+                                          bottomTitles: SideTitles(
+                                            showTitles: true,
+                                            reservedSize: 22,
+                                            textStyle: TextStyle(
+                                                color: const Color(0xff68737d),
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 16),
+                                            getTitles: (value) {
+                                              switch (value.toInt()) {
+                                                case 0:
+                                                  return '0s';
+                                                case 20:
+                                                  return '5s';
+                                                case 40:
+                                                  return '10s';
+                                                case 60:
+                                                  return '15s';
+                                                case 80:
+                                                  return '20s';
+                                                case 100:
+                                                  return '25s';
+                                              }
 
-                                        return '';
-                                      },
-                                      margin: 8,
-                                    ),
-                                    leftTitles: SideTitles(
-                                      showTitles: true,
-                                      textStyle: TextStyle(
-                                        color: const Color(0xff67727d),
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 15,
+                                              return '';
+                                            },
+                                            margin: 8,
+                                          ),
+                                          leftTitles: SideTitles(
+                                            showTitles: true,
+                                            textStyle: TextStyle(
+                                              color: const Color(0xff67727d),
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 15,
+                                            ),
+                                            getTitles: (value) {
+                                              switch (value.toInt()) {
+                                                case 20:
+                                                  return '20%';
+                                                case 40:
+                                                  return '40%';
+                                                case 60:
+                                                  return '60%';
+                                                case 80:
+                                                  return '80%';
+                                                case 100:
+                                                  return '100%';
+                                              }
+                                              return '';
+                                            },
+                                            reservedSize: 28,
+                                            margin: 12,
+                                          ),
+                                        ),
+                                        borderData: FlBorderData(
+                                            show: true,
+                                            border: Border.all(
+                                                color: Color(0xff37434d),
+                                                width: 1)),
+                                        minX: 0,
+                                        maxX: 100,
+                                        minY: 0,
+                                        maxY: 100,
+                                        lineBarsData: [
+                                          LineChartBarData(
+                                            spots: snapshot.data,
+                                            isCurved: true,
+                                            colors: ramGradientColors,
+                                            barWidth: 5,
+                                            isStrokeCapRound: true,
+                                            dotData: FlDotData(
+                                              show: false,
+                                            ),
+                                            belowBarData: BelowBarData(
+                                              show: true,
+                                              colors: ramGradientColors
+                                                  .map((color) =>
+                                                      color.withOpacity(0.3))
+                                                  .toList(),
+                                            ),
+                                          ),
+                                        ],
                                       ),
-                                      getTitles: (value) {
-                                        switch (value.toInt()) {
-                                          case 20:
-                                            return '20%';
-                                          case 40:
-                                            return '40%';
-                                          case 60:
-                                            return '60%';
-                                          case 80:
-                                            return '80%';
-                                          case 100:
-                                            return '100%';
-                                        }
-                                        return '';
-                                      },
-                                      reservedSize: 28,
-                                      margin: 12,
                                     ),
-                                  ),
-                                  borderData: FlBorderData(
-                                      show: true,
-                                      border: Border.all(
-                                          color: Color(0xff37434d), width: 1)),
-                                  minX: 0,
-                                  maxX: 20,
-                                  minY: 0,
-                                  maxY: 100,
-                                  lineBarsData: [
-                                    LineChartBarData(
-                                      spots: ramlistFl,
-                                      isCurved: true,
-                                      colors: ramGradientColors,
-                                      barWidth: 5,
-                                      isStrokeCapRound: true,
-                                      dotData: FlDotData(
-                                        show: false,
-                                      ),
-                                      belowBarData: BelowBarData(
-                                        show: true,
-                                        colors: ramGradientColors
-                                            .map((color) =>
-                                                color.withOpacity(0.3))
-                                            .toList(),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
+                                  );
+                                }),
                           ),
                         ),
                       ),

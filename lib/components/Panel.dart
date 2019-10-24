@@ -18,16 +18,16 @@ class _Panel extends State<MemberPanel> {
   Dio dio = new Dio();
   StreamController<List<FromMember>> streamMember =
       StreamController<List<FromMember>>.broadcast();
-      List<FromMember> list= new List<FromMember>();
+  List<FromMember> list = new List<FromMember>();
   @override
   void initState() {
-    dio.options.baseUrl = "http://192.168.20.180:5000/api";
+    dio.options.baseUrl = "https://cybersvn.team/api";
     dio.options.connectTimeout = 5000; //5s
     dio.options.receiveTimeout = 6000;
     dio.options.validateStatus = (status) {
       return status < 500;
     };
-      list  = getData();
+    list = getData();
     // TODO: implement initState
     super.initState();
   }
@@ -45,7 +45,8 @@ class _Panel extends State<MemberPanel> {
     });
     // print(member.length);
     return member;
-    }
+  }
+
   @override
   void dispose() {
     // TODO: implement dispose
@@ -101,7 +102,10 @@ class _Panel extends State<MemberPanel> {
                 gradient: Gradients.coldLinear,
                 shadowColor: Gradients.hotLinear.colors.last.withOpacity(0.4),
                 child: Text("Dashboard"),
-                callback: () {Navigator.pop(context);Navigator.pop(context);},
+                callback: () {
+                  Navigator.pop(context);
+                  Navigator.pop(context);
+                },
               ),
               ListTile(
                 leading: CircleAvatar(
@@ -116,34 +120,40 @@ class _Panel extends State<MemberPanel> {
                       color: CupertinoColors.activeOrange, fontSize: 16),
                 ),
               ),
-               
             ],
           ),
         ),
       ),
-      body: streamMember.stream == null ? CircularProgressIndicator() : StreamBuilder(
-        initialData: List<FromMember>(),
-        stream: streamMember.stream,
-        builder: (BuildContext context,AsyncSnapshot<List<FromMember>> snapshot) {
-          return ListView.builder(
-                    itemCount: snapshot.data.length,
-                    itemBuilder: (context, position) {
-                      return ListTile(
-                        leading: CircleAvatar(
-                          //maxRadius: 30,
-                          backgroundImage: NetworkImage(snapshot.data[position].provider_pic),
-                        ),
-                        title: Text(snapshot.data[position].name),
-                        subtitle: Text('Member Point: '+snapshot.data[position].point.toString()+"  Permision: "+snapshot.data[position].post_permission.toString()),
-                        trailing: FloatingActionButton(
-                          child: Icon(
-                           snapshot.data[position].post_permission ? Icons.check_circle : Icons.do_not_disturb_on),
-                        ),
-                      );
-                    },
-                  );
-        }
-      ),
+      body: streamMember.stream == null
+          ? CircularProgressIndicator()
+          : StreamBuilder(
+              initialData: List<FromMember>(),
+              stream: streamMember.stream,
+              builder: (BuildContext context,
+                  AsyncSnapshot<List<FromMember>> snapshot) {
+                return ListView.builder(
+                  itemCount: snapshot.data.length,
+                  itemBuilder: (context, position) {
+                    return ListTile(
+                      leading: CircleAvatar(
+                        //maxRadius: 30,
+                        backgroundImage:
+                            NetworkImage(snapshot.data[position].provider_pic),
+                      ),
+                      title: Text(snapshot.data[position].name),
+                      subtitle: Text('Member Point: ' +
+                          snapshot.data[position].point.toString() +
+                          "  Permision: " +
+                          snapshot.data[position].post_permission.toString()),
+                      trailing: FloatingActionButton(
+                        child: Icon(snapshot.data[position].post_permission
+                            ? Icons.check_circle
+                            : Icons.do_not_disturb_on),
+                      ),
+                    );
+                  },
+                );
+              }),
       floatingActionButton: FloatingActionButton(
         child: new Icon(Icons.menu),
         onPressed: () {
